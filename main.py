@@ -15,7 +15,10 @@ from google.oauth2.service_account import Credentials
 
 # ================= CONFIG =================
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-ADMIN_IDS = list(map(int, os.getenv("ADMIN_IDS", "").split(",")))
+
+# FIXED ADMIN_IDS (без краша)
+ADMIN_IDS = [int(x) for x in os.getenv("ADMIN_IDS", "").split(",") if x.strip()]
+
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID")
 GOOGLE_CREDENTIALS = os.getenv("GOOGLE_CREDENTIALS")
 
@@ -24,14 +27,22 @@ logging.basicConfig(level=logging.INFO)
 
 # ================= GOOGLE SHEETS =================
 def init_google():
-    creds_dict = json.loads(GOOGLE_CREDENTIALS)
-    creds = Credentials.from_service_account_info(
-        creds_dict,
-        scopes=["https://www.googleapis.com/auth/spreadsheets"]
-    )
-    client = gspread.authorize(creds)
-    sheet = client.open_by_key(GOOGLE_SHEET_ID).sheet1
-    return sheet
+    try:
+        creds_dict = json.loads(GOOGLE_CREDENTIALS)
+
+        creds = Credentials.from_service_account_info(
+            creds_dict,
+            scopes=["https://www.googleapis.com/auth/spreadsheets"]
+        )
+
+        client = gspread.authorize(creds)
+        sheet = client.open_by_key(GOOGLE_SHEET_ID).sheet1
+        print("✅ Google Sheets connected")
+        return sheet
+
+    except Exception as e:
+        print("❌ Google init error:", e)
+        return None
 
 sheet = init_google()
 
@@ -43,6 +54,9 @@ class Survey(StatesGroup):
     photo = State()
 
 # ================= BOT =================
+if not BOT_TOKEN:
+    raise ValueError("❌ BOT_TOKEN not set")
+
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(storage=MemoryStorage())
 
@@ -59,8 +73,12 @@ def yes_no_kb():
 
 @dp.message(CommandStart())
 async def start(message: types.Message, state: FSMContext):
+    print("START command received")
     await state.clear()
-    await message.answer("👋 Привет! Начнём опрос.\n\n1. Вам понравился сервис?", reply_markup=yes_no_kb())
+    await message.answer(
+        "👋 Привет! Начнём опрос.\n\n1. Вам понравился сервис?",
+        reply_markup=yes_no_kb()
+    )
     await state.set_state(Survey.q1)
 
 @dp.message(Survey.q1)
@@ -94,14 +112,18 @@ async def get_photo(message: types.Message, state: FSMContext):
 async def finish(message: types.Message, state: FSMContext, photo=None):
     data = await state.get_data()
 
-    # Save to Google Sheets
-    sheet.append_row([
-        message.from_user.id,
-        message.from_user.username,
-        data.get("q1"),
-        data.get("q2"),
-        data.get("q3")
-    ])
+    # Save to Google Sheets (если работает)
+    if sheet:
+        try:
+            sheet.append_row([
+                message.from_user.id,
+                message.from_user.username,
+                data.get("q1"),
+                data.get("q2"),
+                data.get("q3")
+            ])
+        except Exception as e:
+            print("❌ Google write error:", e)
 
     # Send to admins
     text = (
@@ -113,10 +135,13 @@ async def finish(message: types.Message, state: FSMContext, photo=None):
     )
 
     for admin in ADMIN_IDS:
-        if photo:
-            await bot.send_photo(admin, photo, caption=text)
-        else:
-            await bot.send_message(admin, text)
+        try:
+            if photo:
+                await bot.send_photo(admin, photo, caption=text)
+            else:
+                await bot.send_message(admin, text)
+        except Exception as e:
+            print(f"❌ Admin send error: {e}")
 
     await message.answer("✅ Спасибо за участие!")
     await state.clear()
@@ -129,6 +154,8 @@ async def cancel(message: types.Message, state: FSMContext):
 
 # ================= MAIN =================
 async def main():
+    print("🚀 Bot starting...")
+    await bot.delete_webhook(drop_pending_updates=True)
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
