@@ -1,7 +1,6 @@
 import asyncio
 import logging
 import os
-import json
 
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import CommandStart, Command
@@ -17,7 +16,6 @@ from google.oauth2.service_account import Credentials
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_IDS = [int(x) for x in os.getenv("ADMIN_IDS", "").split(",") if x.strip()]
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID")
-GOOGLE_CREDENTIALS = os.getenv("GOOGLE_CREDENTIALS")
 
 logging.basicConfig(level=logging.INFO)
 
@@ -25,9 +23,21 @@ logging.basicConfig(level=logging.INFO)
 def init_google():
     try:
         creds = Credentials.from_service_account_file(
-    "creds.json",
-    scopes=["https://www.googleapis.com/auth/spreadsheets"]
-)
+            "creds.json",
+            scopes=["https://www.googleapis.com/auth/spreadsheets"]
+        )
+
+        client = gspread.authorize(creds)
+        sheet = client.open_by_key(GOOGLE_SHEET_ID).sheet1
+
+        print("✅ Google подключен")
+        return sheet
+
+    except Exception as e:
+        print("❌ Google error:", e)
+        return None
+
+
 sheet = init_google()
 
 # ================= FSM =================
@@ -177,8 +187,11 @@ async def finish(message: types.Message, state: FSMContext):
                 data.get("rating"),
                 data.get("comment")
             ])
+            print("✅ Записано в таблицу")
         except Exception as e:
             print("❌ Sheets error:", e)
+    else:
+        print("❌ sheet = None")
 
     # Admin report
     text = (
