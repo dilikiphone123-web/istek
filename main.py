@@ -24,17 +24,10 @@ logging.basicConfig(level=logging.INFO)
 # ================= GOOGLE =================
 def init_google():
     try:
-        creds_dict = json.loads(GOOGLE_CREDENTIALS)
-        creds = Credentials.from_service_account_info(
-            creds_dict,
-            scopes=["https://www.googleapis.com/auth/spreadsheets"]
-        )
-        client = gspread.authorize(creds)
-        return client.open_by_key(GOOGLE_SHEET_ID).sheet1
-    except Exception as e:
-        print("❌ Google error:", e)
-        return None
-
+        creds = Credentials.from_service_account_file(
+    "creds.json",
+    scopes=["https://www.googleapis.com/auth/spreadsheets"]
+)
 sheet = init_google()
 
 # ================= FSM =================
