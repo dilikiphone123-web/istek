@@ -1,162 +1,181 @@
-import asyncio
 import logging
-import os
-import json
-
-from aiogram import Bot, Dispatcher, types, F
-from aiogram.filters import CommandStart, Command
-from aiogram.fsm.state import State, StatesGroup
-from aiogram.fsm.context import FSMContext
-from aiogram.fsm.storage.memory import MemoryStorage
-from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
+from aiogram import Bot, Dispatcher, executor, types
+from aiogram.contrib.fsm_storage.memory import MemoryStorage
+from aiogram.dispatcher import FSMContext
+from aiogram.dispatcher.filters.state import State, StatesGroup
 
 import gspread
-from google.oauth2.service_account import Credentials
+from oauth2client.service_account import ServiceAccountCredentials
 
-# ================= CONFIG =================
-BOT_TOKEN = os.getenv("BOT_TOKEN")
+# ---------------- НАСТРОЙКИ ----------------
+API_TOKEN = "YOUR_BOT_TOKEN"
+ADMIN_ID = 123456789  # id руководителя
 
-# FIXED ADMIN_IDS (без краша)
-ADMIN_IDS = [int(x) for x in os.getenv("ADMIN_IDS", "").split(",") if x.strip()]
+# Google Sheets
+scope = ["https://spreadsheets.google.com/feeds"]
+creds = ServiceAccountCredentials.from_json_keyfile_name("creds.json", scope)
+client = gspread.authorize(creds)
+sheet = client.open("BotData").sheet1
 
-GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID")
-GOOGLE_CREDENTIALS = os.getenv("GOOGLE_CREDENTIALS")
-
-# ================= LOGGING =================
 logging.basicConfig(level=logging.INFO)
 
-# ================= GOOGLE SHEETS =================
-def init_google():
-    try:
-        creds_dict = json.loads(GOOGLE_CREDENTIALS)
+bot = Bot(token=API_TOKEN)
+dp = Dispatcher(bot, storage=MemoryStorage())
 
-        creds = Credentials.from_service_account_info(
-            creds_dict,
-            scopes=["https://www.googleapis.com/auth/spreadsheets"]
-        )
-
-        client = gspread.authorize(creds)
-        sheet = client.open_by_key(GOOGLE_SHEET_ID).sheet1
-        print("✅ Google Sheets connected")
-        return sheet
-
-    except Exception as e:
-        print("❌ Google init error:", e)
-        return None
-
-sheet = init_google()
-
-# ================= FSM =================
-class Survey(StatesGroup):
-    q1 = State()
-    q2 = State()
-    q3 = State()
+# ---------------- СОСТОЯНИЯ ----------------
+class Form(StatesGroup):
+    lang = State()
+    name = State()
+    phone = State()
+    foam = State()
+    trash = State()
+    rating = State()
     photo = State()
+    comment = State()
 
-# ================= BOT =================
-if not BOT_TOKEN:
-    raise ValueError("❌ BOT_TOKEN not set")
+# ---------------- ТЕКСТЫ ----------------
+texts = {
+    "ru": {
+        "name": "Напишите своё имя:",
+        "phone": "👷 Введите свой номер:",
+        "foam": "Монтажный шов (пена) без щелей и пустот?",
+        "trash": "Мусор после монтажа убрали полностью?",
+        "rating": "Оцените качество монтажа:",
+        "photo": "📸 Пришлите фото или видео:",
+        "comment": "💬 Напишите комментарий:",
+        "done": "✅ Спасибо! Данные отправлены."
+    },
+    "uz": {
+        "name": "Ismingizni yozing:",
+        "phone": "👷 Telefon raqamingizni kiriting:",
+        "foam": "Montaj ko‘pigi bo‘shliqsiz bajarildimi?",
+        "trash": "Ishdan keyin chiqindi tozalandi?",
+        "rating": "Ish sifatini baholang:",
+        "photo": "📸 Rasm yoki video yuboring:",
+        "comment": "💬 Izoh qoldiring:",
+        "done": "✅ Rahmat! Ma'lumot yuborildi."
+    }
+}
 
-bot = Bot(token=BOT_TOKEN)
-dp = Dispatcher(storage=MemoryStorage())
+# ---------------- КНОПКИ ----------------
+def lang_kb():
+    kb = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    kb.add("🇷🇺 Русский", "🇺🇿 O‘zbekcha")
+    return kb
 
-# ================= KEYBOARDS =================
 def yes_no_kb():
-    return ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text="👍 Да"), KeyboardButton(text="👎 Нет")]
-        ],
-        resize_keyboard=True
-    )
+    kb = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    kb.add("ДА", "НЕТ")
+    return kb
 
-# ================= HANDLERS =================
+def rating_kb():
+    kb = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    kb.add("⭐1","⭐⭐2","⭐⭐⭐3","⭐⭐⭐⭐4","⭐⭐⭐⭐⭐5")
+    return kb
 
-@dp.message(CommandStart())
-async def start(message: types.Message, state: FSMContext):
-    print("START command received")
-    await state.clear()
-    await message.answer(
-        "👋 Привет! Начнём опрос.\n\n1. Вам понравился сервис?",
-        reply_markup=yes_no_kb()
-    )
-    await state.set_state(Survey.q1)
+# ---------------- СТАРТ ----------------
+@dp.message_handler(commands="start")
+async def start(msg: types.Message):
+    await msg.answer("Выберите язык / Tilni tanlang:", reply_markup=lang_kb())
+    await Form.lang.set()
 
-@dp.message(Survey.q1)
-async def q1(message: types.Message, state: FSMContext):
-    await state.update_data(q1=message.text)
-    await message.answer("2. Всё ли было понятно?", reply_markup=yes_no_kb())
-    await state.set_state(Survey.q2)
+# ---------------- ЯЗЫК ----------------
+@dp.message_handler(state=Form.lang)
+async def set_lang(msg: types.Message, state: FSMContext):
+    if "Русский" in msg.text:
+        lang = "ru"
+    else:
+        lang = "uz"
 
-@dp.message(Survey.q2)
-async def q2(message: types.Message, state: FSMContext):
-    await state.update_data(q2=message.text)
-    await message.answer("3. Будете рекомендовать?", reply_markup=yes_no_kb())
-    await state.set_state(Survey.q3)
+    await state.update_data(lang=lang)
+    await msg.answer(texts[lang]["name"])
+    await Form.name.set()
 
-@dp.message(Survey.q3)
-async def q3(message: types.Message, state: FSMContext):
-    await state.update_data(q3=message.text)
-    await message.answer("📸 Отправьте фото (или /skip)")
-    await state.set_state(Survey.photo)
+# ---------------- ИМЯ ----------------
+@dp.message_handler(state=Form.name)
+async def get_name(msg: types.Message, state: FSMContext):
+    await state.update_data(name=msg.text)
+    data = await state.get_data()
+    await msg.answer(texts[data["lang"]]["phone"])
+    await Form.phone.set()
 
-@dp.message(Command("skip"), Survey.photo)
-async def skip_photo(message: types.Message, state: FSMContext):
-    await finish(message, state, photo=None)
+# ---------------- ТЕЛЕФОН ----------------
+@dp.message_handler(state=Form.phone)
+async def get_phone(msg: types.Message, state: FSMContext):
+    await state.update_data(phone=msg.text)
+    data = await state.get_data()
+    await msg.answer(texts[data["lang"]]["foam"], reply_markup=yes_no_kb())
+    await Form.foam.set()
 
-@dp.message(F.photo, Survey.photo)
-async def get_photo(message: types.Message, state: FSMContext):
-    photo = message.photo[-1].file_id
-    await finish(message, state, photo=photo)
+# ---------------- ПЕНА ----------------
+@dp.message_handler(state=Form.foam)
+async def get_foam(msg: types.Message, state: FSMContext):
+    await state.update_data(foam=msg.text)
+    data = await state.get_data()
+    await msg.answer(texts[data["lang"]]["trash"], reply_markup=yes_no_kb())
+    await Form.trash.set()
 
-# ================= FINISH =================
-async def finish(message: types.Message, state: FSMContext, photo=None):
+# ---------------- МУСОР ----------------
+@dp.message_handler(state=Form.trash)
+async def get_trash(msg: types.Message, state: FSMContext):
+    await state.update_data(trash=msg.text)
+    data = await state.get_data()
+    await msg.answer(texts[data["lang"]]["rating"], reply_markup=rating_kb())
+    await Form.rating.set()
+
+# ---------------- ОЦЕНКА ----------------
+@dp.message_handler(state=Form.rating)
+async def get_rating(msg: types.Message, state: FSMContext):
+    await state.update_data(rating=msg.text)
+    data = await state.get_data()
+    await msg.answer(texts[data["lang"]]["photo"])
+    await Form.photo.set()
+
+# ---------------- ФОТО ----------------
+@dp.message_handler(content_types=["photo", "video"], state=Form.photo)
+async def get_photo(msg: types.Message, state: FSMContext):
+    file_id = msg.photo[-1].file_id if msg.photo else msg.video.file_id
+    await state.update_data(photo=file_id)
+
+    data = await state.get_data()
+    await msg.answer(texts[data["lang"]]["comment"])
+    await Form.comment.set()
+
+# ---------------- КОММЕНТ ----------------
+@dp.message_handler(state=Form.comment)
+async def get_comment(msg: types.Message, state: FSMContext):
+    await state.update_data(comment=msg.text)
     data = await state.get_data()
 
-    # Save to Google Sheets (если работает)
-    if sheet:
-        try:
-            sheet.append_row([
-                message.from_user.id,
-                message.from_user.username,
-                data.get("q1"),
-                data.get("q2"),
-                data.get("q3")
-            ])
-        except Exception as e:
-            print("❌ Google write error:", e)
+    # --- СОХРАНЕНИЕ В GOOGLE SHEETS ---
+    sheet.append_row([
+        data.get("name"),
+        data.get("phone"),
+        data.get("foam"),
+        data.get("trash"),
+        data.get("rating"),
+        data.get("comment")
+    ])
 
-    # Send to admins
-    text = (
-        f"📊 Новый опрос:\n\n"
-        f"User: @{message.from_user.username}\n"
-        f"1: {data.get('q1')}\n"
-        f"2: {data.get('q2')}\n"
-        f"3: {data.get('q3')}"
-    )
+    # --- ОТПРАВКА АДМИНУ ---
+    text = f"""
+📊 Новый отчёт
 
-    for admin in ADMIN_IDS:
-        try:
-            if photo:
-                await bot.send_photo(admin, photo, caption=text)
-            else:
-                await bot.send_message(admin, text)
-        except Exception as e:
-            print(f"❌ Admin send error: {e}")
+👤 Имя: {data.get("name")}
+📞 Телефон: {data.get("phone")}
+🧱 Шов: {data.get("foam")}
+🧹 Мусор: {data.get("trash")}
+⭐ Оценка: {data.get("rating")}
+💬 Комментарий: {data.get("comment")}
+"""
 
-    await message.answer("✅ Спасибо за участие!")
-    await state.clear()
+    await bot.send_message(ADMIN_ID, text)
+    await bot.send_photo(ADMIN_ID, data.get("photo"))
 
-# ================= CANCEL =================
-@dp.message(Command("cancel"))
-async def cancel(message: types.Message, state: FSMContext):
-    await state.clear()
-    await message.answer("❌ Опрос отменён")
+    await msg.answer(texts[data["lang"]]["done"])
 
-# ================= MAIN =================
-async def main():
-    print("🚀 Bot starting...")
-    await bot.delete_webhook(drop_pending_updates=True)
-    await dp.start_polling(bot)
+    await state.finish()
 
+# ---------------- ЗАПУСК ----------------
 if __name__ == "__main__":
-    asyncio.run(main())
+    executor.start_polling(dp, skip_updates=True)
