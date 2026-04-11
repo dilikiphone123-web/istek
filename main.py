@@ -3,7 +3,7 @@ import logging
 import os
 
 from aiogram import Bot, Dispatcher, types, F
-from aiogram.filters import CommandStart, Command
+from aiogram.filters import CommandStart
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.storage.memory import MemoryStorage
@@ -45,6 +45,7 @@ class Survey(StatesGroup):
     lang = State()
     name = State()
     phone = State()
+    manager = State()
     foam = State()
     trash = State()
     rating = State()
@@ -92,22 +93,24 @@ TEXTS = {
     "ru": {
         "name": "Напишите своё имя:",
         "phone": "👷 Введите свой номер:",
+        "manager": "👨‍💼 Кто ваш менеджер?",
         "foam": "Монтажный шов без щелей?",
         "trash": "Мусор убрали полностью?",
         "rating": "Оцените качество:",
         "photo": "📸 Пришлите фото или видео:",
-        "comment": "💬 Напишите комментарий:",
-        "done": "✅ Спасибо!"
+        "comment": "💬 Напишите свой комментарий. Может вам что-то не понравилось? Или есть предложения по улучшению:",
+        "done": "✅ Спасибо! Спасибо, что выбрали ISTEK 🙏"
     },
     "uz": {
         "name": "Ismingizni yozing:",
         "phone": "👷 Telefon raqam:",
+        "manager": "👨‍💼 Sizning menejeringiz kim?",
         "foam": "Montaj sifati yaxshi?",
         "trash": "Chiqindi tozalandi?",
         "rating": "Baholang:",
         "photo": "📸 Rasm yoki video yuboring:",
-        "comment": "💬 Izoh yozing:",
-        "done": "✅ Rahmat!"
+        "comment": "💬 Izoh yozing. Sizga nima yoqmadi? Yoki qanday takliflaringiz bor:",
+        "done": "✅ Rahmat! ISTEKni tanlaganingiz uchun rahmat 🙏"
     }
 }
 
@@ -136,6 +139,13 @@ async def get_name(message: types.Message, state: FSMContext):
 @dp.message(Survey.phone)
 async def get_phone(message: types.Message, state: FSMContext):
     await state.update_data(phone=message.text)
+    data = await state.get_data()
+    await message.answer(TEXTS[data["lang"]]["manager"])
+    await state.set_state(Survey.manager)
+
+@dp.message(Survey.manager)
+async def get_manager(message: types.Message, state: FSMContext):
+    await state.update_data(manager=message.text)
     data = await state.get_data()
     await message.answer(TEXTS[data["lang"]]["foam"], reply_markup=yes_no_kb(data["lang"]))
     await state.set_state(Survey.foam)
@@ -182,6 +192,7 @@ async def finish(message: types.Message, state: FSMContext):
                 message.from_user.id,
                 data.get("name"),
                 data.get("phone"),
+                data.get("manager"),
                 data.get("foam"),
                 data.get("trash"),
                 data.get("rating"),
@@ -198,6 +209,7 @@ async def finish(message: types.Message, state: FSMContext):
         f"📊 Новый отчёт\n\n"
         f"👤 {data.get('name')}\n"
         f"📞 {data.get('phone')}\n"
+        f"👨‍💼 Менеджер: {data.get('manager')}\n"
         f"Шов: {data.get('foam')}\n"
         f"Мусор: {data.get('trash')}\n"
         f"⭐ {data.get('rating')}\n"
